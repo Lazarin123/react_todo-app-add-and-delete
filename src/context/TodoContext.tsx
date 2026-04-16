@@ -76,14 +76,31 @@ export const TodoProvider: React.FC<{ children: React.ReactNode }> = ({
       .catch(() => setError(ERROR_TYPE.LOAD));
   }, []);
 
-  // Foco automático no input
+  // 2. Foco automático no input principal
   useEffect(() => {
-    inputRef.current?.focus();
-  }, [todos, tempTodo, error]);
+    if (!editingId) {
+      inputRef.current?.focus();
+    }
+  }, [todos, tempTodo, error, editingId]);
+
+  // 3. Efeito para esconder o erro após 3 segundos (Ajuste para o teste)
+  useEffect(() => {
+    if (error !== ERROR_TYPE.NONE) {
+      const timer = setTimeout(() => {
+        setError(ERROR_TYPE.NONE);
+      }, 3000);
+
+      return () => clearTimeout(timer);
+    }
+
+    return () => {};
+  }, [error]);
 
   const handleCloseError = useCallback(() => setError(ERROR_TYPE.NONE), []);
+
   const handleTitleChange = (e: React.ChangeEvent<HTMLInputElement>) =>
     setTodoTitle(e.target.value);
+
   const handleEditingTodo = (e: React.ChangeEvent<HTMLInputElement>) =>
     setEditTodoTitle(e.target.value);
 
@@ -136,6 +153,36 @@ export const TodoProvider: React.FC<{ children: React.ReactNode }> = ({
       });
   };
 
+  // --- EDITAR TODO (SUBMISSÃO) ---
+  const handleEditFormSubmission = (todo: Todo) => {
+    const trimmedTitle = editTodoTitle.trim();
+
+    if (trimmedTitle === todo.title) {
+      setEditingId(null);
+
+      return;
+    }
+
+    if (!trimmedTitle) {
+      handleDeleteTodo(todo.id);
+
+      return;
+    }
+
+    setLoadingIds(prev => [...prev, todo.id]);
+
+    todoService
+      .patchTodo({ ...todo, title: trimmedTitle })
+      .then(updatedTodo => {
+        setTodos(prev => prev.map(t => (t.id === todo.id ? updatedTodo : t)));
+        setEditingId(null);
+      })
+      .catch(() => setError(ERROR_TYPE.UPDATE))
+      .finally(() => {
+        setLoadingIds(prev => prev.filter(curr => curr !== todo.id));
+      });
+  };
+
   // --- ALTERAR STATUS (CHECKBOX) ---
   const handleTodoToggle = (todo: Todo) => {
     setLoadingIds(prev => [...prev, todo.id]);
@@ -160,12 +207,15 @@ export const TodoProvider: React.FC<{ children: React.ReactNode }> = ({
 
     setLoadingIds(prev => [...prev, ...todosToUpdate.map(t => t.id)]);
 
-    todoService
-      .patchAllTodos(allTodos)
-      .then(updatedTodos => {
+    const updatePromises = todosToUpdate.map(t =>
+      todoService.patchTodo({ ...t, completed: !areAllCompleted }),
+    );
+
+    Promise.all(updatePromises)
+      .then(updatedResults => {
         setTodos(prev =>
           prev.map(t => {
-            const found = updatedTodos.find(res => res.id === t.id);
+            const found = updatedResults.find(res => res.id === t.id);
 
             return found || t;
           }),
@@ -181,8 +231,9 @@ export const TodoProvider: React.FC<{ children: React.ReactNode }> = ({
 
     setLoadingIds(prev => [...prev, ...completed.map(t => t.id)]);
 
-    todoService
-      .deleteCompletedTodos(allTodos)
+    const deletePromises = completed.map(t => todoService.deleteTodo(t.id));
+
+    Promise.all(deletePromises)
       .then(() => {
         setTodos(prev => prev.filter(t => !t.completed));
       })
@@ -190,7 +241,6 @@ export const TodoProvider: React.FC<{ children: React.ReactNode }> = ({
       .finally(() => setLoadingIds([]));
   };
 
-  // Filtros e Derivações
   const unfinishedTodos = todos.filter(t => !t.completed);
 
   const filteredTodos = useMemo(() => {
@@ -206,9 +256,6 @@ export const TodoProvider: React.FC<{ children: React.ReactNode }> = ({
       return true;
     });
   }, [todos, filterBy]);
-
-  // Edição (Será implementada na Task de Update)
-  const handleEditFormSubmission = () => {};
 
   const value = {
     todos,
