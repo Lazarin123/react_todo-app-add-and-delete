@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/exhaustive-deps */
 import React, {
   useState,
   useEffect,
@@ -83,7 +84,7 @@ export const TodoProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   }, [todos, tempTodo, error, editingId]);
 
-  // 3. Efeito para esconder o erro após 3 segundos (Ajuste para o teste)
+  // 3. Efeito para esconder o erro após 3 segundos
   useEffect(() => {
     if (error !== ERROR_TYPE.NONE) {
       const timer = setTimeout(() => {
@@ -147,7 +148,10 @@ export const TodoProvider: React.FC<{ children: React.ReactNode }> = ({
       .then(() => {
         setTodos(prev => prev.filter(todo => todo.id !== id));
       })
-      .catch(() => setError(ERROR_TYPE.DELETE))
+      .catch(() => {
+        setError(ERROR_TYPE.DELETE);
+        setLoadingIds(prev => prev.filter(curr => curr !== id));
+      })
       .finally(() => {
         setLoadingIds(prev => prev.filter(curr => curr !== id));
       });
@@ -211,33 +215,65 @@ export const TodoProvider: React.FC<{ children: React.ReactNode }> = ({
       todoService.patchTodo({ ...t, completed: !areAllCompleted }),
     );
 
-    Promise.all(updatePromises)
-      .then(updatedResults => {
+    Promise.allSettled(updatePromises)
+      .then(results => {
+        const successfullyUpdated: Todo[] = [];
+        let hasError = false;
+
+        results.forEach(result => {
+          if (result.status === 'fulfilled') {
+            successfullyUpdated.push(result.value);
+          } else {
+            hasError = true;
+          }
+        });
+
         setTodos(prev =>
           prev.map(t => {
-            const found = updatedResults.find(res => res.id === t.id);
+            const found = successfullyUpdated.find(res => res.id === t.id);
 
             return found || t;
           }),
         );
+
+        if (hasError) {
+          setError(ERROR_TYPE.UPDATE);
+        }
       })
-      .catch(() => setError(ERROR_TYPE.UPDATE))
       .finally(() => setLoadingIds([]));
   };
 
   // --- LIMPAR COMPLETADOS ---
   const handleClearCompleted = (allTodos: Todo[]) => {
     const completed = allTodos.filter(t => t.completed);
+    const completedIds = completed.map(t => t.id);
 
-    setLoadingIds(prev => [...prev, ...completed.map(t => t.id)]);
+    setLoadingIds(prev => [...prev, ...completedIds]);
 
-    const deletePromises = completed.map(t => todoService.deleteTodo(t.id));
+    const deletePromises = completed.map(t =>
+      todoService.deleteTodo(t.id).then(() => t.id),
+    );
 
-    Promise.all(deletePromises)
-      .then(() => {
-        setTodos(prev => prev.filter(t => !t.completed));
+    Promise.allSettled(deletePromises)
+      .then(results => {
+        const deletedIds: number[] = [];
+        let hasError = false;
+
+        results.forEach(result => {
+          if (result.status === 'fulfilled') {
+            deletedIds.push(result.value);
+          } else {
+            hasError = true;
+          }
+        });
+
+        // Remove apenas os que foram deletados com sucesso no servidor
+        setTodos(prev => prev.filter(t => !deletedIds.includes(t.id)));
+
+        if (hasError) {
+          setError(ERROR_TYPE.DELETE);
+        }
       })
-      .catch(() => setError(ERROR_TYPE.DELETE))
       .finally(() => setLoadingIds([]));
   };
 
